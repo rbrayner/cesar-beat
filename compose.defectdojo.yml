@@ -1,0 +1,111 @@
+name: defectdojo
+
+services:
+  nginx:
+    image: defectdojo/defectdojo-nginx:2.58.2
+    depends_on:
+      uwsgi:
+        condition: service_started
+    environment:
+      NGINX_METRICS_ENABLED: "false"
+      DD_UWSGI_HOST: uwsgi
+      DD_UWSGI_PORT: "3031"
+    volumes:
+      - defectdojo_media:/usr/share/nginx/html/media
+    ports:
+      - "127.0.0.1:18080:8080"
+
+  uwsgi:
+    image: defectdojo/defectdojo-django:2.58.2
+    depends_on:
+      initializer:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      valkey:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "-t", "60", "--", "/entrypoint-uwsgi.sh"]
+    environment:
+      DD_DEBUG: "False"
+      DD_ALLOWED_HOSTS: "*"
+      DD_DATABASE_URL: postgresql://defectdojo:defectdojo@postgres:5432/defectdojo
+      DD_CELERY_BROKER_URL: redis://valkey:6379/0
+      DD_SECRET_KEY: "${DD_SECRET_KEY:-REPLACE-ME-django-secret-32-chars}"
+      DD_CREDENTIAL_AES_256_KEY: "${DD_CREDENTIAL_AES_256_KEY:-REPLACE-ME-aes256-key-32-chars-x}"
+      DD_DATABASE_READINESS_TIMEOUT: "60"
+    volumes:
+      - defectdojo_media:/app/media
+
+  celerybeat:
+    image: defectdojo/defectdojo-django:2.58.2
+    depends_on:
+      initializer:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      valkey:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "-t", "60", "--", "/entrypoint-celery-beat.sh"]
+    environment:
+      DD_DATABASE_URL: postgresql://defectdojo:defectdojo@postgres:5432/defectdojo
+      DD_CELERY_BROKER_URL: redis://valkey:6379/0
+      DD_SECRET_KEY: "${DD_SECRET_KEY:-REPLACE-ME-django-secret-32-chars}"
+      DD_CREDENTIAL_AES_256_KEY: "${DD_CREDENTIAL_AES_256_KEY:-REPLACE-ME-aes256-key-32-chars-x}"
+      DD_DATABASE_READINESS_TIMEOUT: "60"
+
+  celeryworker:
+    image: defectdojo/defectdojo-django:2.58.2
+    depends_on:
+      initializer:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      valkey:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "-t", "60", "--", "/entrypoint-celery-worker.sh"]
+    environment:
+      DD_DATABASE_URL: postgresql://defectdojo:defectdojo@postgres:5432/defectdojo
+      DD_CELERY_BROKER_URL: redis://valkey:6379/0
+      DD_SECRET_KEY: "${DD_SECRET_KEY:-REPLACE-ME-django-secret-32-chars}"
+      DD_CREDENTIAL_AES_256_KEY: "${DD_CREDENTIAL_AES_256_KEY:-REPLACE-ME-aes256-key-32-chars-x}"
+      DD_DATABASE_READINESS_TIMEOUT: "60"
+    volumes:
+      - defectdojo_media:/app/media
+
+  initializer:
+    image: defectdojo/defectdojo-django:2.58.2
+    depends_on:
+      postgres:
+        condition: service_started
+    entrypoint: ["/wait-for-it.sh", "postgres:5432", "--", "/entrypoint-initializer.sh"]
+    environment:
+      DD_DATABASE_URL: postgresql://defectdojo:defectdojo@postgres:5432/defectdojo
+      DD_ADMIN_USER: "${DD_USER:-admin}"
+      DD_ADMIN_MAIL: admin@cesar-beat.local
+      DD_ADMIN_FIRST_NAME: Admin
+      DD_ADMIN_LAST_NAME: User
+      DD_ADMIN_PASSWORD: "${DD_PASS:-Lab1234!}"
+      DD_INITIALIZE: "true"
+      DD_SECRET_KEY: "${DD_SECRET_KEY:-REPLACE-ME-django-secret-32-chars}"
+      DD_CREDENTIAL_AES_256_KEY: "${DD_CREDENTIAL_AES_256_KEY:-REPLACE-ME-aes256-key-32-chars-x}"
+      DD_DATABASE_READINESS_TIMEOUT: "60"
+
+  postgres:
+    image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: defectdojo
+      POSTGRES_USER: defectdojo
+      POSTGRES_PASSWORD: defectdojo
+    volumes:
+      - defectdojo_postgres:/var/lib/postgresql/data
+
+  valkey:
+    image: valkey/valkey:9.0.3-alpine@sha256:e1095c6c76ee982cb2d1e07edbb7fb2a53606630a1d810d5a47c9f646b708bf5
+    volumes:
+      - defectdojo_redis:/data
+
+volumes:
+  defectdojo_postgres: {}
+  defectdojo_media: {}
+  defectdojo_redis: {}

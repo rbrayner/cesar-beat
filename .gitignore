@@ -1,0 +1,6 @@
+.dt-apikey
+.dd-apitoken
+sbom.json
+trivy.json
+*.log
+.env
