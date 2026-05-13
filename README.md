@@ -188,6 +188,6 @@ Two CI jobs:
 1. **Make public** — *Settings → General → Danger Zone → Make public*
 2. **Actions** — *Settings → Actions → General → Actions permissions* → "Allow all actions and reusable workflows" (third-party actions are used). The workflow grants its own `pull-requests: write` and `security-events: write` via the `permissions:` block, so the *Workflow permissions* default can stay on "Read repository contents".
 3. **Code Scanning** — *Settings → Code security → Code scanning → Set up* (Default)
-4. **Dependabot** — *Settings → Code security* → enable Dependency graph, Dependabot alerts and security updates
+4. **Dependabot** — *Settings → Code security* → enable Dependency graph and Dependabot alerts (skip *security updates* — that auto-opens fix PRs, out of scope for this license-focused demo).
 5. **Branch protection** *(optional)* — *Settings → Branches → Add rule* on `main`, require `trivy-license` and `dependency-review`
 6. **First PR** — open a PR (e.g. bump a version in `nodegoat-manifests/package.json`); the workflow runs and annotations appear shortly after Code Scanning ingests the SARIF.
