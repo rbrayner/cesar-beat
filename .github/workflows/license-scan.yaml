@@ -1,0 +1,97 @@
+name: license-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+# Cancel older runs on the same branch/PR when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build cesar-beat-app image
+        run: docker build -t cesar-beat-app:latest .
+
+      - name: Trivy license scan (SARIF for Code Scanning)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cesar-beat-app:latest
+          scanners: license
+          format: sarif
+          output: trivy-license.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-license.sarif
+          category: trivy-license
+
+      - name: Trivy license scan (JSON for markdown rendering)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cesar-beat-app:latest
+          scanners: license
+          format: json
+          output: trivy-license.json
+          severity: HIGH,CRITICAL
+
+      - name: Render markdown summary of license findings
+        run: |
+          jq -r '
+            [ .Results[]? | select(.Licenses) | .Licenses[]
+              | {pkg: .PkgName, license: .Name, category: .Category, severity: .Severity} ] as $all
+            | ($all | length) as $count
+            | "## License findings — \($count) HIGH/CRITICAL\n\n"
+              + (if $count == 0 then
+                  "_No HIGH/CRITICAL license findings._\n"
+                else
+                  "| Package | License | Category | Severity |\n|---|---|---|---|\n"
+                  + ([$all[] | "| `\(.pkg)` | `\(.license)` | \(.category) | **\(.severity)** |"] | join("\n"))
+                  + "\n\nFull report: see *Security → Code scanning alerts*."
+                end)
+          ' trivy-license.json > trivy-license.md
+
+      - name: Sticky PR comment with license findings
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: trivy-license
+          path: trivy-license.md
+
+      - name: Fail if any HIGH/CRITICAL license findings
+        run: |
+          COUNT=$(jq '[.Results[]?.Licenses[]?] | length' trivy-license.json)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::error::$COUNT HIGH/CRITICAL license findings — failing the job (see PR comment + Security tab)."
+            exit 1
+          fi
+          echo "No HIGH/CRITICAL license findings."
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v5
+        with:
+          # Vulnerability check only — license check is handled by the Trivy job.
+          # (Dep Review surfaces "Unknown License" for GitHub Actions, which is noise here.)
+          vulnerability-check: true
+          license-check: false
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          show-openssf-scorecard: false

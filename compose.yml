@@ -1,0 +1,50 @@
+services:
+  app:
+    build: .
+    image: cesar-beat-app:latest
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://mongo:27017/nodegoat
+    ports:
+      - "127.0.0.1:5050:4000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  mongo:
+    image: mongo:4.4
+    healthcheck:
+      test: ["CMD", "mongo", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  dtrack-apiserver:
+    image: dependencytrack/apiserver:4.14.2
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    ports:
+      - "127.0.0.1:9082:8080"
+    volumes:
+      - dtrack-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/version >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  dtrack-frontend:
+    image: dependencytrack/frontend:4.14.2
+    ports:
+      - "127.0.0.1:9081:8080"
+    environment:
+      API_BASE_URL: "http://localhost:9082"
+    depends_on:
+      dtrack-apiserver:
+        condition: service_started
+
+volumes:
+  dtrack-data:
