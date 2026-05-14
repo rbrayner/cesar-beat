@@ -24,6 +24,20 @@ jobs:
       - name: Build cesar-beat-app image
         run: docker build -t cesar-beat-app:latest .
 
+      - name: Generate CycloneDX SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: cesar-beat-app:latest
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+
       - name: Trivy license scan (SARIF for Code Scanning)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -71,14 +85,14 @@ jobs:
           header: trivy-license
           path: trivy-license.md
 
-      - name: Fail if any HIGH/CRITICAL license findings
+      - name: Fail if Trivy found HIGH/CRITICAL license findings
         run: |
           COUNT=$(jq '[.Results[]?.Licenses[]?] | length' trivy-license.json)
           if [ "$COUNT" -gt 0 ]; then
-            echo "::error::$COUNT HIGH/CRITICAL license findings — failing the job (see PR comment + Security tab)."
+            echo "::error::Trivy found $COUNT HIGH/CRITICAL license findings"
             exit 1
           fi
-          echo "No HIGH/CRITICAL license findings."
+          echo "No HIGH/CRITICAL license findings from Trivy."
 
   dependency-review:
     if: github.event_name == 'pull_request'
@@ -89,9 +103,8 @@ jobs:
         uses: actions/dependency-review-action@v5
         with:
           # Vulnerability check only — license check is handled by the Trivy job.
-          # (Dep Review surfaces "Unknown License" for GitHub Actions, which is noise here.)
           vulnerability-check: true
-          license-check: false
+          license-check: true
           fail-on-severity: high
           comment-summary-in-pr: on-failure
           show-openssf-scorecard: false

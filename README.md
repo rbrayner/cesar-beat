@@ -164,8 +164,8 @@ just sync-manifests   # clones NodejsGoat, regenerates lock, copies into nodegoa
 
 Two CI jobs:
 
-1. **`trivy-license`** — builds the image and runs Trivy with `--scanners license`. Uploads SARIF to Code Scanning (inline PR annotations + persistent entries in Security tab) and posts a sticky PR comment with the table (`marocchino/sticky-pull-request-comment@v2`).
-2. **`dependency-review`** *(PR only)* — `actions/dependency-review-action@v5`. Vulnerability-only (license check is handled by Trivy in the job above). Fails the PR on any ≥ high vuln introduced by the diff, reading from `nodegoat-manifests/package-lock.json`.
+1. **`trivy-license`** — builds the image, generates a CycloneDX SBOM with Syft (`anchore/sbom-action`) and uploads it as the `sbom-cyclonedx` workflow artifact, runs Trivy with `--scanners license`, uploads SARIF to Code Scanning, posts a sticky PR comment with the findings table, and finally fails the job on any HIGH/CRITICAL Trivy finding. License gate.
+2. **`dependency-review`** *(PR only)* — `actions/dependency-review-action@v5`. Fails the PR on any ≥ high vuln introduced by the diff, reading from `nodegoat-manifests/package-lock.json`.
 
 ### Where findings show up in the PR
 
@@ -175,6 +175,7 @@ Two CI jobs:
 | PR *Conversation* | License table (sticky) | sticky-pull-request-comment |
 | PR *Conversation* | Dep diff with vulns | dependency-review-action |
 | PR *Checks* | One check per job | GitHub Actions |
+| Workflow run *Summary* → Artifacts | Downloadable `sbom-cyclonedx` (CycloneDX JSON) | Syft via `anchore/sbom-action` |
 | Repo *Security* → Code scanning | Persistent findings | Code Scanning |
 | Repo *Security* → Dependabot | Dependency vulns | Dependabot (reads `nodegoat-manifests/`) |
 
