@@ -42,10 +42,15 @@ TRIVY_JSON    := "trivy.json"
   echo "Next: just bootstrap   (create API key)"
   echo "Then: just scan        (SBOM + upload to DT)"
 
-# Stop and remove containers + volumes
+# Pause stack: stop containers but keep them defined (fastest restart with just up)
+[group('main-lab')]
+@stop:
+  docker compose stop
+
+# Remove containers, KEEP volumes — DT database (incl. NVD mirror, ~2.4GB) is preserved across just up cycles
 [group('main-lab')]
 @down:
-  docker compose down -v
+  docker compose down
 
 # Tail container logs
 [group('main-lab')]
@@ -110,7 +115,8 @@ bootstrap: && dt-nvd-api
   fi
 
   for PERM in BOM_UPLOAD PROJECT_CREATION_UPLOAD VIEW_PORTFOLIO VIEW_VULNERABILITY \
-              POLICY_MANAGEMENT VIEW_POLICY_VIOLATION POLICY_VIOLATION_ANALYSIS; do
+              POLICY_MANAGEMENT VIEW_POLICY_VIOLATION POLICY_VIOLATION_ANALYSIS \
+              PORTFOLIO_MANAGEMENT; do
     curl -s -o /dev/null -X POST -H "Authorization: Bearer $JWT" \
       "{{DT_URL}}/api/v1/permission/$PERM/team/$TEAM_UUID" || true
   done
@@ -147,8 +153,12 @@ dt-nvd-api:
   echo "Restarting dtrack-apiserver so the new config + analyzer kicks in..."
   docker compose restart dtrack-apiserver
   echo ""
-  echo "Done. Watch the mirror with:"
-  echo "  docker compose logs -f dtrack-apiserver | grep -iE 'NvdApi|NistMirror'"
+  echo "Done. Watch the mirror with: just dt-nvd-progress"
+
+# Tail NVD mirror progress in real time (Ctrl+C to stop). First-time mirror takes ~15min with API key, hours without.
+[group('main-lab')]
+@dt-nvd-progress:
+  docker compose logs -f dtrack-apiserver | grep -iE "NistApiMirror|Mirrored|Invalid API"
 
 # Create/ensure the "block copyleft licenses" policy in DT
 [group('main-lab')]
@@ -218,7 +228,7 @@ sbom:
 
 # Generate SBOM and upload it to Dependency-Track
 [group('main-lab')]
-scan: _ensure-apikey policy-setup sbom
+scan: _ensure-apikey policy-setup sbom && dt-refresh-metrics
   #!/usr/bin/env bash
   set -euo pipefail
   API_KEY=$(cat {{APIKEY_FILE}})
@@ -237,6 +247,48 @@ scan: _ensure-apikey policy-setup sbom
   else
     echo "Error $HTTP_CODE:"; cat /tmp/dt-response.json; exit 1
   fi
+
+# Force-refresh portfolio metrics (DT only recomputes them on a daily cron, so the dashboard would otherwise show stale zeros after an upload)
+[group('main-lab')]
+dt-refresh-metrics: _ensure-apikey
+  #!/usr/bin/env bash
+  set -euo pipefail
+  API_KEY=$(cat {{APIKEY_FILE}})
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X GET "{{DT_URL}}/api/v1/metrics/portfolio/refresh" \
+    -H "X-Api-Key: $API_KEY")
+  if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "204" ]; then
+    echo "Portfolio metrics refresh triggered. Dashboard updates within ~10s: {{DT_FRONTEND}}/dashboard"
+  else
+    echo "Error: HTTP $HTTP_CODE from {{DT_URL}}/api/v1/metrics/portfolio/refresh"
+    exit 1
+  fi
+
+# Delete ALL DT projects (and their findings) via API — clears the dashboard for a fresh lab demo. Preserves NVD mirror, policies and license groups.
+[group('main-lab')]
+dt-clean-projects: _ensure-apikey && dt-refresh-metrics
+  #!/usr/bin/env bash
+  set -euo pipefail
+  command -v jq >/dev/null || { echo "Install jq: brew install jq"; exit 1; }
+  API_KEY=$(cat {{APIKEY_FILE}})
+
+  PROJECTS=$(curl -fsS -H "X-Api-Key: $API_KEY" "{{DT_URL}}/api/v1/project?pageSize=1000" | jq -r '.[]?.uuid')
+  if [ -z "$PROJECTS" ]; then
+    echo "No projects in DT — already clean."
+    exit 0
+  fi
+
+  COUNT=$(echo "$PROJECTS" | wc -l | tr -d ' ')
+  echo "Deleting $COUNT project(s) from DT..."
+  for UUID in $PROJECTS; do
+    HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "X-Api-Key: $API_KEY" "{{DT_URL}}/api/v1/project/$UUID")
+    if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then
+      echo "  deleted $UUID"
+    else
+      echo "  failed $UUID (HTTP $HTTP)"
+    fi
+  done
+  echo "Done. NVD mirror, policies and license groups intact."
 
 # Run Trivy license scan locally (quick alternative, tabular output)
 [group('main-lab')]
@@ -348,10 +400,15 @@ nuke: clean
   echo "Next: just dd-bootstrap   (get API token, create product + engagement)"
   echo "Then: just dd-scan        (upload sbom.json from 'just scan')"
 
-# Stop and remove DefectDojo containers + volumes
+# Pause DefectDojo stack: stop containers but keep them defined (fastest restart with just dd-up)
+[group('defectdojo-lab')]
+@dd-stop:
+  docker compose -f {{DD_COMPOSE}} stop
+
+# Remove DefectDojo containers, KEEP volumes — Postgres data preserved across just dd-up cycles
 [group('defectdojo-lab')]
 @dd-down:
-  docker compose -f {{DD_COMPOSE}} down -v
+  docker compose -f {{DD_COMPOSE}} down
 
 # Tail DefectDojo logs
 [group('defectdojo-lab')]
@@ -472,7 +529,15 @@ dd-nuke: dd-clean
     postgres:{{POSTGRES_VERSION}} \
     valkey/valkey:{{VALKEY_VERSION}} 2>/dev/null || true
 
-# Tear down BOTH stacks (cesar-beat + DefectDojo)
+# Pause BOTH stacks (preserves containers and volumes)
+[group('both')]
+stop-all: stop dd-stop
+
+# Remove containers from BOTH stacks but keep all volumes
+[group('both')]
+down-all: down dd-down
+
+# Tear down BOTH stacks (cesar-beat + DefectDojo) — removes volumes
 [group('both')]
 clean-all: clean dd-clean
 

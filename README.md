@@ -94,13 +94,17 @@ In this lab the target image (NodeGoat on Alpine) carries copyleft OS packages â
 
 ```
 just up               # docker compose up -d --build --wait
-just down             # docker compose down -v
+just stop             # pause (containers stopped, can resume fast with just up)
+just down             # remove containers, KEEP volumes (DT db + NVD mirror preserved)
 just logs             # tail container logs
 just bootstrap        # create Dependency-Track API key + apply NVD_KEY from .env (no-op if NVD_KEY empty)
 just dt-nvd-api       # re-apply NVD_KEY config (also chained by bootstrap)
+just dt-nvd-progress  # tail NVD mirror progress in real time (~15min initial sync with key)
 just policy-setup     # create the "fail on Copyleft" policy
 just sbom             # Syft -> sbom.json (CycloneDX; builds image if missing)
-just scan             # sbom + upload to Dependency-Track
+just scan             # sbom + upload to Dependency-Track (chains dt-refresh-metrics)
+just dt-refresh-metrics  # force portfolio metrics recompute (else DT only refreshes daily)
+just dt-clean-projects   # delete all DT projects via API (resets dashboard, keeps NVD mirror + policies)
 just trivy-json       # Trivy -> trivy.json (no upload; builds image if missing)
 just trivy-license    # tabular Trivy license scan (no file output)
 just trivy-license-high  # same as trivy-license but only HIGH/CRITICAL (copyleft)
