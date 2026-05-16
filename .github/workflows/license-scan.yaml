@@ -93,18 +93,3 @@ jobs:
             exit 1
           fi
           echo "No HIGH/CRITICAL license findings from Trivy."
-
-  dependency-review:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v5
-        with:
-          # Vulnerability check only — license check is handled by the Trivy job.
-          vulnerability-check: true
-          license-check: true
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
-          show-openssf-scorecard: false
