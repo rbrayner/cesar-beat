@@ -110,9 +110,11 @@ just trivy-license    # tabular Trivy license scan (no file output)
 just trivy-license-high  # same as trivy-license but only HIGH/CRITICAL (copyleft)
 just sync-manifests   # refresh nodegoat-manifests/{package.json,package-lock.json} from upstream
 just open             # open NodeGoat + Dependency-Track in the browser
-just clean            # tear down cesar-beat stack (NodeGoat + Dependency-Track — not DefectDojo)
+just clean            # tear down cesar-beat stack + remove volumes (wipes DT db + NVD mirror)
 just nuke             # clean + remove external images (Syft, Trivy, Dependency-Track, Mongo)
-just clean-all        # tear down BOTH stacks (cesar-beat + DefectDojo)
+just stop-all         # pause BOTH stacks (preserves containers and volumes)
+just down-all         # remove containers from BOTH stacks, keep all volumes
+just clean-all        # tear down BOTH stacks (cesar-beat + DefectDojo) — removes volumes
 just nuke-all         # nuke + dd-nuke (everything: containers, volumes, all images)
 ```
 
@@ -145,12 +147,13 @@ Object hierarchy in DefectDojo: **Product** (`cesar-beat`) → **Engagement** (`
 
 ```
 just dd-up            # docker compose -f compose.defectdojo.yml up -d --wait
-just dd-down          # docker compose -f compose.defectdojo.yml down -v
+just dd-stop          # pause DefectDojo (containers stopped, resume fast with dd-up)
+just dd-down          # remove DefectDojo containers, KEEP volumes (Postgres data preserved)
 just dd-logs          # tail DefectDojo logs
 just dd-bootstrap     # API token + product + engagement
 just dd-scan          # trivy-json + upload to DefectDojo (Trivy Scan parser)
 just dd-open          # open DefectDojo in the browser
-just dd-clean         # dd-down + remove .dd-apitoken
+just dd-clean         # tear down DefectDojo + remove volumes + .dd-apitoken
 just dd-nuke          # dd-clean + remove DefectDojo/postgres/valkey images
 ```
 
@@ -170,6 +173,20 @@ Two CI jobs:
 
 1. **`trivy-license`** — builds the image, generates a CycloneDX SBOM with Syft (`anchore/sbom-action`) and uploads it as the `sbom-cyclonedx` workflow artifact, runs Trivy with `--scanners license`, uploads SARIF to Code Scanning, posts a sticky PR comment with the findings table, and finally fails the job on any HIGH/CRITICAL Trivy finding. License gate.
 2. **`dependency-review`** *(PR only)* — `actions/dependency-review-action@v5`. Fails the PR on any ≥ high vuln introduced by the diff, reading from `nodegoat-manifests/package-lock.json`.
+
+### Demoing the dep-review license gate (`scripts/`)
+
+NodeGoat's npm deps are all permissive (MIT/Apache/ISC), so `dependency-review` finds nothing to deny by default. To trigger the gate on demand, two idempotent scripts under `scripts/` add/remove `gpl-2.0-licensed@1.0.0` (a real npm package published as a license-policy fixture) to `nodegoat-manifests/`:
+
+```bash
+scripts/add-demo-gpl-dep.sh       # patches package.json + package-lock.json with a real GPL-2.0 dep
+# git add nodegoat-manifests/ && git commit -m "demo: gpl dep" && git push
+# → dep-review fails in the PR with: Denied: gpl-2.0-licensed@1.0.0 (GPL-2.0-only)
+
+scripts/remove-demo-gpl-dep.sh    # cleans the dep out for the next demo run
+```
+
+Both scripts are jq-based and use set/delete operations, so re-running them is byte-identical to a single run. The package only matters as a fixture — it's a real published npm pkg whose license metadata GitHub can verify (which is why a hand-crafted "fake GPL" entry in the lockfile would *not* trigger the gate — `dependency-review-action` queries the npm registry, not the local lockfile's `license` field).
 
 ### Where findings show up in the PR
 
